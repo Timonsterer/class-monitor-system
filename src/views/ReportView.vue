@@ -3,7 +3,7 @@
     <div class="topbar">
       <div>
         <h1>報表匯出</h1>
-        <p class="subtitle">Schedule Report</p>
+        <p class="subtitle">Firebase Online Report</p>
       </div>
 
       <router-link to="/admin" class="back-btn">
@@ -11,17 +11,21 @@
       </router-link>
     </div>
 
+    <div v-if="loading" class="loading">
+      Firebase 資料讀取中...
+    </div>
+
     <div class="card">
       <div class="action-grid">
-        <button class="export-btn" @click="exportExcel">
+        <button class="export-btn" :disabled="loading" @click="exportExcel">
           匯出美化 Excel
         </button>
 
-        <button class="clean-btn" @click="removeDuplicates">
+        <button class="clean-btn" :disabled="loading" @click="removeDuplicates">
           刪除重複
         </button>
 
-        <button class="danger-btn" @click="deleteAll">
+        <button class="danger-btn" :disabled="loading" @click="deleteAll">
           一鍵刪除全部
         </button>
       </div>
@@ -29,9 +33,13 @@
       <p class="hint">
         目前共 {{ schedules.length }} 筆排課資料
       </p>
+
+      <p v-if="message" class="message">
+        {{ message }}
+      </p>
     </div>
 
-    <div v-if="schedules.length === 0" class="empty">
+    <div v-if="!loading && schedules.length === 0" class="empty">
       目前尚無報表資料
     </div>
 
@@ -71,19 +79,32 @@
 import { ref, onMounted } from 'vue'
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
+import {
+  getSchedules,
+  deleteAllSchedules,
+  removeDuplicateSchedules
+} from '@/services/scheduleService'
 
 const schedules = ref([])
+const loading = ref(false)
+const message = ref('')
 
 onMounted(() => {
   loadSchedules()
 })
 
-function loadSchedules() {
-  schedules.value = JSON.parse(localStorage.getItem('schedules') || '[]')
-}
+async function loadSchedules() {
+  loading.value = true
+  message.value = ''
 
-function saveSchedules() {
-  localStorage.setItem('schedules', JSON.stringify(schedules.value))
+  try {
+    schedules.value = await getSchedules()
+  } catch (error) {
+    console.error(error)
+    message.value = 'Firebase 資料讀取失敗，請確認 firebase.js、.env 與 Firestore 權限'
+  } finally {
+    loading.value = false
+  }
 }
 
 function statusText(item) {
@@ -120,34 +141,32 @@ function borderStyle() {
   }
 }
 
-function removeDuplicates() {
-  const map = new Map()
+async function removeDuplicates() {
+  const yes = window.confirm('確定要刪除 Firebase 裡面的重複排課資料嗎？')
 
-  schedules.value.forEach(item => {
-    const key = [
-      item.date || '',
-      item.startTime || '',
-      item.endTime || '',
-      item.schoolName || '',
-      item.teacherName || '',
-      item.studentName || '',
-      item.courseTitle || item.courseName || '',
-      item.meetUrl || ''
-    ].join('|')
+  if (!yes) return
 
-    if (!map.has(key)) {
-      map.set(key, item)
-    }
-  })
+  loading.value = true
+  message.value = ''
 
-  const before = schedules.value.length
-  schedules.value = Array.from(map.values())
-  saveSchedules()
+  try {
+    const before = schedules.value.length
 
-  alert(`已刪除 ${before - schedules.value.length} 筆重複資料`)
+    await removeDuplicateSchedules()
+    await loadSchedules()
+
+    const after = schedules.value.length
+
+    message.value = `已刪除 ${before - after} 筆重複資料`
+  } catch (error) {
+    console.error(error)
+    message.value = '刪除重複資料失敗'
+  } finally {
+    loading.value = false
+  }
 }
 
-function deleteAll() {
+async function deleteAll() {
   const password = window.prompt('請輸入刪除密碼')
 
   if (password !== '123456') {
@@ -155,13 +174,24 @@ function deleteAll() {
     return
   }
 
-  const yes = window.confirm('確定要刪除全部排課資料嗎？此動作無法還原。')
+  const yes = window.confirm('確定要刪除 Firebase 裡全部排課資料嗎？此動作無法還原。')
 
   if (!yes) return
 
-  schedules.value = []
-  saveSchedules()
-  alert('已刪除全部排課資料')
+  loading.value = true
+  message.value = ''
+
+  try {
+    await deleteAllSchedules()
+
+    schedules.value = []
+    message.value = '已刪除全部排課資料'
+  } catch (error) {
+    console.error(error)
+    message.value = '刪除全部資料失敗'
+  } finally {
+    loading.value = false
+  }
 }
 
 function groupSchedules() {
@@ -264,6 +294,7 @@ async function exportExcel() {
     sheet.mergeCells(`A${groupRow.number}:E${groupRow.number}`)
 
     groupRow.height = 28
+
     groupRow.getCell(1).font = {
       bold: true,
       size: 13,
@@ -388,6 +419,7 @@ async function exportExcel() {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 25px;
+  gap: 16px;
 }
 
 h1 {
@@ -406,6 +438,16 @@ h1 {
   color: white;
   padding: 12px 20px;
   border-radius: 12px;
+  white-space: nowrap;
+}
+
+.loading {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 12px 16px;
+  border-radius: 14px;
+  margin-bottom: 14px;
+  font-weight: bold;
 }
 
 .card {
@@ -438,17 +480,40 @@ h1 {
   background: #16a34a;
 }
 
+.export-btn:hover {
+  background: #15803d;
+}
+
 .clean-btn {
   background: #2563eb;
+}
+
+.clean-btn:hover {
+  background: #1d4ed8;
 }
 
 .danger-btn {
   background: #ef4444;
 }
 
+.danger-btn:hover {
+  background: #dc2626;
+}
+
+button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
 .hint {
   margin: 14px 0 0;
   color: #6b7280;
+}
+
+.message {
+  margin: 12px 0 0;
+  color: #2563eb;
+  font-weight: bold;
 }
 
 .empty {
@@ -487,6 +552,7 @@ th {
 
 td {
   color: #111827;
+  word-break: break-word;
 }
 
 @media (max-width: 768px) {
@@ -497,7 +563,6 @@ td {
   .topbar {
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
   }
 
   .back-btn {
@@ -506,6 +571,12 @@ td {
 
   .action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .export-btn,
+  .clean-btn,
+  .danger-btn {
+    width: 100%;
   }
 }
 </style>

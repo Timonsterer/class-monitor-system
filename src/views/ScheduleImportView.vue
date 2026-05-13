@@ -45,10 +45,10 @@
 
         <button
           class="save-btn"
-          :disabled="parsedList.length === 0"
+          :disabled="parsedList.length === 0 || saving"
           @click="saveSchedules"
         >
-          匯入 {{ parsedList.length }} 筆排課
+          {{ saving ? '匯入中...' : `匯入 ${parsedList.length} 筆排課` }}
         </button>
 
         <button class="clear-btn" @click="clearAll">
@@ -81,7 +81,7 @@
           </thead>
 
           <tbody>
-            <tr v-for="item in parsedList" :key="item.id">
+            <tr v-for="item in parsedList" :key="item.tempId">
               <td>{{ item.date }}</td>
               <td>{{ item.startTime }} - {{ item.endTime }}</td>
               <td>{{ item.teacherName }}</td>
@@ -103,6 +103,7 @@
 import { ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
+import { importSchedules } from '@/services/scheduleService'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
 
@@ -110,6 +111,7 @@ const rawText = ref('')
 const parsedList = ref([])
 const message = ref('')
 const loading = ref(false)
+const saving = ref(false)
 
 async function handlePdfUpload(event) {
   const file = event.target.files[0]
@@ -276,7 +278,7 @@ function parseRow(row, index) {
   const remarks = getRemarks(text, meetMatch ? meetMatch[0] : '')
 
   return {
-    id: Date.now() + index,
+    tempId: `${Date.now()}-${index}`,
 
     date,
     teacherName,
@@ -296,9 +298,8 @@ function parseRow(row, index) {
 
     studentOnlineAt: '',
     teacherOnlineAt: '',
-    classCompletedAt: '',
-
-    createdAt: new Date().toISOString()
+    classStartedAt: '',
+    classCompletedAt: ''
   }
 }
 
@@ -416,20 +417,33 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function saveSchedules() {
-  const oldSchedules = JSON.parse(localStorage.getItem('schedules') || '[]')
+async function saveSchedules() {
+  if (parsedList.value.length === 0) {
+    message.value = '沒有資料可以匯入'
+    return
+  }
 
-  const merged = [
-    ...oldSchedules,
-    ...parsedList.value
-  ]
+  saving.value = true
+  message.value = ''
 
-  localStorage.setItem('schedules', JSON.stringify(merged))
+  try {
+    const list = parsedList.value.map(item => {
+      const { tempId, ...data } = item
+      return data
+    })
 
-  message.value = `已成功匯入 ${parsedList.value.length} 筆排課`
+    await importSchedules(list)
 
-  rawText.value = ''
-  parsedList.value = []
+    message.value = `已成功匯入 ${parsedList.value.length} 筆排課到 Firebase`
+
+    rawText.value = ''
+    parsedList.value = []
+  } catch (error) {
+    console.error(error)
+    message.value = '匯入失敗，請確認 Firebase 設定與 Firestore 權限'
+  } finally {
+    saving.value = false
+  }
 }
 
 function clearAll() {

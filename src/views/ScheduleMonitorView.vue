@@ -3,7 +3,7 @@
     <div class="topbar">
       <div>
         <h1>課程燈號監控</h1>
-        <p class="subtitle">一眼看出誰還沒進教室、誰已完成</p>
+        <p class="subtitle">Firebase Online Monitor</p>
       </div>
 
       <div class="top-actions">
@@ -15,6 +15,10 @@
           返回首頁
         </router-link>
       </div>
+    </div>
+
+    <div v-if="loading" class="loading">
+      Firebase 資料讀取中...
     </div>
 
     <div class="summary-grid">
@@ -81,7 +85,7 @@
       </div>
     </div>
 
-    <div v-if="filteredSchedules.length === 0" class="empty">
+    <div v-if="!loading && filteredSchedules.length === 0" class="empty">
       目前沒有符合條件的排課資料
     </div>
 
@@ -96,6 +100,7 @@
           <div class="main-left">
             <div class="name-row">
               <h2>{{ item.studentName || '未填學生' }}</h2>
+
               <span class="status-badge" :class="statusClass(item)">
                 {{ statusText(item) }}
               </span>
@@ -105,7 +110,7 @@
               <span>{{ item.date || '未填日期' }}</span>
               <span>{{ item.startTime || '--:--' }} - {{ item.endTime || '--:--' }}</span>
               <span>{{ item.teacherName || '未填老師' }}</span>
-              <span>{{ item.schoolName || '未填學校' }}</span>
+              <span>{{ item.schoolName || '未填機構' }}</span>
             </div>
           </div>
 
@@ -139,7 +144,7 @@
         <div v-if="expandedId === item.id" class="detail-panel">
           <div class="detail-grid">
             <div>
-              <strong>學校</strong>
+              <strong>機構</strong>
               <span>{{ item.schoolName || '未填' }}</span>
             </div>
 
@@ -173,30 +178,53 @@
           </div>
 
           <div class="actions">
-            <button @click="toggleStudent(item)">
+            <button
+              :disabled="updatingId === item.id"
+              @click="toggleStudent(item)"
+            >
               {{ item.studentOnline ? '取消學生上線' : '學生上線' }}
             </button>
 
-            <button @click="toggleTeacher(item)">
+            <button
+              :disabled="updatingId === item.id"
+              @click="toggleTeacher(item)"
+            >
               {{ item.teacherOnline ? '取消老師上線' : '老師上線' }}
             </button>
 
-            <button class="complete-btn" @click="completeClass(item)">
+            <button
+              class="complete-btn"
+              :disabled="updatingId === item.id"
+              @click="completeClass(item)"
+            >
               課程完成
             </button>
 
-            <button class="delete-btn" @click="deleteSchedule(item.id)">
+            <button
+              class="delete-btn"
+              :disabled="updatingId === item.id"
+              @click="removeOne(item.id)"
+            >
               刪除
             </button>
           </div>
         </div>
       </div>
     </div>
+
+    <p v-if="message" class="message">
+      {{ message }}
+    </p>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import {
+  getSchedules,
+  updateSchedule,
+  deleteSchedule
+} from '@/services/scheduleService'
 
 const schedules = ref([])
 const keyword = ref('')
@@ -204,6 +232,9 @@ const dateFilter = ref('')
 const statusFilter = ref('')
 const quickFilter = ref('waiting')
 const expandedId = ref(null)
+const loading = ref(false)
+const updatingId = ref('')
+const message = ref('')
 
 onMounted(() => {
   loadSchedules()
@@ -257,9 +288,10 @@ const filteredSchedules = computed(() => {
   }
 
   return list.sort((a, b) => {
-    const dateA = `${a.date || ''} ${a.startTime || ''}`
-    const dateB = `${b.date || ''} ${b.startTime || ''}`
-    return dateA.localeCompare(dateB)
+    const keyA = `${a.date || ''} ${a.startTime || ''} ${a.teacherName || ''} ${a.studentName || ''}`
+    const keyB = `${b.date || ''} ${b.startTime || ''} ${b.teacherName || ''} ${b.studentName || ''}`
+
+    return keyA.localeCompare(keyB)
   })
 })
 
@@ -277,55 +309,128 @@ const doneCount = computed(() => {
   return schedules.value.filter(item => item.classCompleted).length
 })
 
-function loadSchedules() {
-  schedules.value = JSON.parse(localStorage.getItem('schedules') || '[]')
-}
+async function loadSchedules() {
+  loading.value = true
+  message.value = ''
 
-function saveSchedules() {
-  localStorage.setItem('schedules', JSON.stringify(schedules.value))
+  try {
+    schedules.value = await getSchedules()
+  } catch (error) {
+    console.error(error)
+    message.value = 'Firebase 資料讀取失敗，請確認 firebase.js、.env 與 Firestore 權限'
+  } finally {
+    loading.value = false
+  }
 }
 
 function toggleExpand(id) {
   expandedId.value = expandedId.value === id ? null : id
 }
 
-function toggleStudent(item) {
-  item.studentOnline = !item.studentOnline
+async function toggleStudent(item) {
+  updatingId.value = item.id
+  message.value = ''
 
-  if (item.studentOnline) {
-    item.studentOnlineAt = new Date().toISOString()
-  } else {
-    item.studentOnlineAt = ''
+  const nextValue = !item.studentOnline
+
+  try {
+    await updateSchedule(item.id, {
+      studentOnline: nextValue,
+      studentOnlineAt: nextValue ? new Date().toISOString() : '',
+      classStarted: nextValue && item.teacherOnline,
+      classStartedAt: nextValue && item.teacherOnline
+        ? new Date().toISOString()
+        : item.classStartedAt || ''
+    })
+
+    item.studentOnline = nextValue
+    item.studentOnlineAt = nextValue ? new Date().toISOString() : ''
+    item.classStarted = nextValue && item.teacherOnline
+
+    if (item.classStarted) {
+      item.classStartedAt = new Date().toISOString()
+    }
+  } catch (error) {
+    console.error(error)
+    message.value = '更新學生上線狀態失敗'
+  } finally {
+    updatingId.value = ''
   }
-
-  saveSchedules()
 }
 
-function toggleTeacher(item) {
-  item.teacherOnline = !item.teacherOnline
+async function toggleTeacher(item) {
+  updatingId.value = item.id
+  message.value = ''
 
-  if (item.teacherOnline) {
-    item.teacherOnlineAt = new Date().toISOString()
-  } else {
-    item.teacherOnlineAt = ''
+  const nextValue = !item.teacherOnline
+
+  try {
+    await updateSchedule(item.id, {
+      teacherOnline: nextValue,
+      teacherOnlineAt: nextValue ? new Date().toISOString() : '',
+      classStarted: item.studentOnline && nextValue,
+      classStartedAt: item.studentOnline && nextValue
+        ? new Date().toISOString()
+        : item.classStartedAt || ''
+    })
+
+    item.teacherOnline = nextValue
+    item.teacherOnlineAt = nextValue ? new Date().toISOString() : ''
+    item.classStarted = item.studentOnline && nextValue
+
+    if (item.classStarted) {
+      item.classStartedAt = new Date().toISOString()
+    }
+  } catch (error) {
+    console.error(error)
+    message.value = '更新老師上線狀態失敗'
+  } finally {
+    updatingId.value = ''
   }
-
-  saveSchedules()
 }
 
-function completeClass(item) {
-  item.classCompleted = true
-  item.classCompletedAt = new Date().toISOString()
-  saveSchedules()
+async function completeClass(item) {
+  updatingId.value = item.id
+  message.value = ''
+
+  try {
+    await updateSchedule(item.id, {
+      classCompleted: true,
+      classCompletedAt: new Date().toISOString()
+    })
+
+    item.classCompleted = true
+    item.classCompletedAt = new Date().toISOString()
+  } catch (error) {
+    console.error(error)
+    message.value = '更新課程完成狀態失敗'
+  } finally {
+    updatingId.value = ''
+  }
 }
 
-function deleteSchedule(id) {
+async function removeOne(id) {
   const yes = window.confirm('確定要刪除這筆排課嗎？')
 
   if (!yes) return
 
-  schedules.value = schedules.value.filter(item => item.id !== id)
-  saveSchedules()
+  updatingId.value = id
+  message.value = ''
+
+  try {
+    await deleteSchedule(id)
+
+    schedules.value = schedules.value.filter(item => item.id !== id)
+
+    if (expandedId.value === id) {
+      expandedId.value = null
+    }
+  } catch (error) {
+    console.error(error)
+    message.value = '刪除失敗'
+  } finally {
+    updatingId.value = ''
+  }
 }
 
 function statusText(item) {
@@ -397,6 +502,15 @@ h1 {
 
 .import-btn {
   background: #2563eb;
+}
+
+.loading {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 12px 16px;
+  border-radius: 14px;
+  margin-bottom: 14px;
+  font-weight: bold;
 }
 
 .summary-grid {
@@ -720,6 +834,11 @@ select:focus {
   background: #1d4ed8;
 }
 
+.actions button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
 .actions .complete-btn {
   background: #16a34a;
 }
@@ -734,6 +853,12 @@ select:focus {
 
 .actions .delete-btn:hover {
   background: #dc2626;
+}
+
+.message {
+  margin-top: 16px;
+  color: #dc2626;
+  font-weight: bold;
 }
 
 @media (max-width: 900px) {
