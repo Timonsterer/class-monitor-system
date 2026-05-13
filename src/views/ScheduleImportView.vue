@@ -3,12 +3,23 @@
     <div class="topbar">
       <div>
         <h1>匯入排課</h1>
-        <p class="subtitle">Upload PDF or paste schedule text</p>
+        <p class="subtitle">本地解析後，再確認上傳 Firebase</p>
       </div>
 
       <router-link to="/admin" class="back-btn">
         返回首頁
       </router-link>
+    </div>
+
+    <div class="status-card">
+      <div>
+        <strong>流程</strong>
+        <p>PDF / 文字 → 本地解析 → 預覽確認 → 上傳 Firebase</p>
+      </div>
+
+      <div class="status-pill">
+        已解析 {{ parsedList.length }} 筆
+      </div>
     </div>
 
     <div class="card">
@@ -18,15 +29,16 @@
         type="file"
         accept="application/pdf"
         class="file-input"
+        :disabled="loading || saving"
         @change="handlePdfUpload"
       />
 
       <p class="hint">
-        可直接上傳 FCA 的 PDF 排課表，系統會自動讀取文字並解析。
+        PDF 只會在本地瀏覽器解析，不會直接上傳 Firebase。
       </p>
 
       <div v-if="loading" class="loading">
-        PDF 讀取中，請稍候...
+        PDF 本地解析中，請稍候...
       </div>
     </div>
 
@@ -35,23 +47,31 @@
 
       <textarea
         v-model="rawText"
+        :disabled="loading || saving"
         placeholder="請貼上排課文字..."
       ></textarea>
 
       <div class="actions">
-        <button @click="parseText">
-          解析預覽
+        <button
+          :disabled="loading || saving"
+          @click="parseText"
+        >
+          本地解析預覽
         </button>
 
         <button
           class="save-btn"
-          :disabled="parsedList.length === 0 || saving"
-          @click="saveSchedules"
+          :disabled="parsedList.length === 0 || saving || loading"
+          @click="confirmUpload"
         >
-          {{ saving ? '匯入中...' : `匯入 ${parsedList.length} 筆排課` }}
+          {{ saving ? '正在上傳 Firebase...' : `確認上傳 Firebase（${parsedList.length} 筆）` }}
         </button>
 
-        <button class="clear-btn" @click="clearAll">
+        <button
+          class="clear-btn"
+          :disabled="loading || saving"
+          @click="clearAll"
+        >
           清空
         </button>
       </div>
@@ -62,7 +82,20 @@
     </div>
 
     <div v-if="parsedList.length > 0" class="table-card">
-      <h2>解析結果預覽</h2>
+      <div class="preview-head">
+        <div>
+          <h2>本地解析結果預覽</h2>
+          <p>確認無誤後，再按「確認上傳 Firebase」。</p>
+        </div>
+
+        <button
+          class="save-btn small"
+          :disabled="saving"
+          @click="confirmUpload"
+        >
+          上傳 Firebase
+        </button>
+      </div>
 
       <div class="table-wrap">
         <table>
@@ -74,7 +107,7 @@
               <th>學生</th>
               <th>程度</th>
               <th>課程</th>
-              <th>學校</th>
+              <th>機構</th>
               <th>Meet</th>
               <th>備註</th>
             </tr>
@@ -94,6 +127,13 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="saving" class="saving-mask">
+      <div class="saving-box">
+        <strong>正在上傳 Firebase</strong>
+        <p>請不要重複點擊或關閉頁面。</p>
       </div>
     </div>
   </div>
@@ -148,10 +188,9 @@ async function handlePdfUpload(event) {
     }
 
     rawText.value = fullText.trim()
-
     parseText()
 
-    message.value = `PDF 讀取完成，成功解析 ${parsedList.value.length} 筆資料`
+    message.value = `PDF 本地解析完成，共 ${parsedList.value.length} 筆。確認後再上傳 Firebase。`
   } catch (error) {
     console.error(error)
     message.value = 'PDF 讀取失敗，請確認 PDF 是否含有可選取文字'
@@ -210,7 +249,7 @@ function parseText() {
   if (parsedList.value.length === 0) {
     message.value = '沒有解析到資料，請確認內容是否包含日期、老師、時間、學生與 Meet 連結'
   } else {
-    message.value = `成功解析 ${parsedList.value.length} 筆資料`
+    message.value = `本地成功解析 ${parsedList.value.length} 筆，尚未上傳 Firebase`
   }
 }
 
@@ -285,6 +324,7 @@ function parseRow(row, index) {
     studentName,
     level,
     courseTitle,
+    courseName: courseTitle,
     schoolName,
     startTime,
     endTime,
@@ -417,14 +457,18 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-async function saveSchedules() {
+async function confirmUpload() {
   if (parsedList.value.length === 0) {
-    message.value = '沒有資料可以匯入'
+    message.value = '沒有資料可以上傳'
     return
   }
 
+  const yes = window.confirm(`確定要上傳 ${parsedList.value.length} 筆排課到 Firebase 嗎？`)
+
+  if (!yes) return
+
   saving.value = true
-  message.value = ''
+  message.value = '正在上傳 Firebase...'
 
   try {
     const list = parsedList.value.map(item => {
@@ -434,13 +478,13 @@ async function saveSchedules() {
 
     await importSchedules(list)
 
-    message.value = `已成功匯入 ${parsedList.value.length} 筆排課到 Firebase`
+    message.value = `已成功上傳 ${list.length} 筆排課到 Firebase`
 
     rawText.value = ''
     parsedList.value = []
   } catch (error) {
     console.error(error)
-    message.value = '匯入失敗，請確認 Firebase 設定與 Firestore 權限'
+    message.value = '上傳 Firebase 失敗，請確認 Firebase 設定、Firestore 權限與網路狀態'
   } finally {
     saving.value = false
   }
@@ -488,6 +532,32 @@ h1 {
   white-space: nowrap;
 }
 
+.status-card {
+  background: #111827;
+  color: white;
+  padding: 18px 22px;
+  border-radius: 20px;
+  margin-bottom: 22px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.status-card p {
+  margin: 6px 0 0;
+  color: #d1d5db;
+}
+
+.status-pill {
+  background: #facc15;
+  color: #111827;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
 .card,
 .table-card {
   background: white;
@@ -527,7 +597,7 @@ label {
 
 textarea {
   width: 100%;
-  min-height: 280px;
+  min-height: 260px;
   padding: 16px;
   border-radius: 14px;
   border: 1px solid #d1d5db;
@@ -556,6 +626,7 @@ button {
   border-radius: 12px;
   cursor: pointer;
   font-size: 15px;
+  font-weight: bold;
 }
 
 button:hover {
@@ -589,9 +660,27 @@ button:disabled {
   font-weight: bold;
 }
 
-.table-card h2 {
-  margin-top: 0;
+.preview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.preview-head h2 {
+  margin: 0;
   color: #111827;
+}
+
+.preview-head p {
+  margin: 6px 0 0;
+  color: #6b7280;
+}
+
+.small {
+  padding: 10px 14px;
+  white-space: nowrap;
 }
 
 .table-wrap {
@@ -627,13 +716,44 @@ td {
   word-break: break-all;
 }
 
+.saving-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 50;
+}
+
+.saving-box {
+  background: white;
+  border-radius: 20px;
+  padding: 28px;
+  min-width: 280px;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+}
+
+.saving-box strong {
+  color: #111827;
+  font-size: 18px;
+}
+
+.saving-box p {
+  color: #6b7280;
+  margin-bottom: 0;
+}
+
 @media (max-width: 768px) {
   .page {
     padding: 18px;
   }
 
   .topbar,
-  .actions {
+  .actions,
+  .preview-head,
+  .status-card {
     flex-direction: column;
     align-items: stretch;
   }
@@ -642,6 +762,10 @@ td {
   button {
     text-align: center;
     width: 100%;
+  }
+
+  .status-pill {
+    text-align: center;
   }
 }
 </style>

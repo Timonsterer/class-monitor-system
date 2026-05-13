@@ -32,28 +32,22 @@ export async function getSchedules() {
 
 export async function addSchedule(data) {
   return await addDoc(collection(db, COLLECTION_NAME), {
-    ...data,
-    studentOnline: data.studentOnline || false,
-    teacherOnline: data.teacherOnline || false,
-    classStarted: data.classStarted || false,
-    classCompleted: data.classCompleted || false,
+    ...cleanScheduleData(data),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
 }
 
 export async function importSchedules(list) {
+  if (!Array.isArray(list) || list.length === 0) return
+
   const batch = writeBatch(db)
 
   list.forEach(item => {
     const ref = doc(collection(db, COLLECTION_NAME))
 
     batch.set(ref, {
-      ...item,
-      studentOnline: item.studentOnline || false,
-      teacherOnline: item.teacherOnline || false,
-      classStarted: item.classStarted || false,
-      classCompleted: item.classCompleted || false,
+      ...cleanScheduleData(item),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     })
@@ -95,16 +89,7 @@ export async function removeDuplicateSchedules() {
   snapshot.docs.forEach(docSnap => {
     const item = docSnap.data()
 
-    const key = [
-      item.date || '',
-      item.startTime || '',
-      item.endTime || '',
-      item.schoolName || '',
-      item.teacherName || '',
-      item.studentName || '',
-      item.courseTitle || item.courseName || '',
-      item.meetUrl || ''
-    ].join('|')
+    const key = createDuplicateKey(item)
 
     if (map.has(key)) {
       batch.delete(doc(db, COLLECTION_NAME, docSnap.id))
@@ -114,4 +99,43 @@ export async function removeDuplicateSchedules() {
   })
 
   await batch.commit()
+}
+
+function cleanScheduleData(data) {
+  return {
+    date: data.date || '',
+    teacherName: data.teacherName || '',
+    studentName: data.studentName || '',
+    level: data.level || '',
+    courseTitle: data.courseTitle || data.courseName || '',
+    courseName: data.courseName || data.courseTitle || '',
+    schoolName: data.schoolName || '',
+    startTime: data.startTime || '',
+    endTime: data.endTime || '',
+    meetUrl: data.meetUrl || '',
+    remarks: data.remarks || '',
+
+    studentOnline: Boolean(data.studentOnline),
+    teacherOnline: Boolean(data.teacherOnline),
+    classStarted: Boolean(data.classStarted),
+    classCompleted: Boolean(data.classCompleted),
+
+    studentOnlineAt: data.studentOnlineAt || '',
+    teacherOnlineAt: data.teacherOnlineAt || '',
+    classStartedAt: data.classStartedAt || '',
+    classCompletedAt: data.classCompletedAt || ''
+  }
+}
+
+function createDuplicateKey(item) {
+  return [
+    item.date || '',
+    item.startTime || '',
+    item.endTime || '',
+    item.schoolName || '',
+    item.teacherName || '',
+    item.studentName || '',
+    item.courseTitle || item.courseName || '',
+    item.meetUrl || ''
+  ].join('|')
 }
