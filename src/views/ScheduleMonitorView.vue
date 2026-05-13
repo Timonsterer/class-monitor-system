@@ -64,7 +64,7 @@
         <input
           v-model="keyword"
           type="text"
-          placeholder="搜尋學生、老師、學校、課程、Meet..."
+          placeholder="搜尋學生、老師、機構、課程、Meet..."
         />
 
         <input v-model="dateFilter" type="date" />
@@ -219,11 +219,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
+  deleteSchedule,
   getSchedules,
-  updateSchedule,
-  deleteSchedule
+  updateSchedule
 } from '@/services/scheduleService'
 
 const schedules = ref([])
@@ -328,27 +328,29 @@ function toggleExpand(id) {
 }
 
 async function toggleStudent(item) {
+  if (!item.id) return
+
   updatingId.value = item.id
   message.value = ''
 
   const nextValue = !item.studentOnline
+  const now = new Date().toISOString()
+  const shouldStart = nextValue && item.teacherOnline
 
   try {
     await updateSchedule(item.id, {
       studentOnline: nextValue,
-      studentOnlineAt: nextValue ? new Date().toISOString() : '',
-      classStarted: nextValue && item.teacherOnline,
-      classStartedAt: nextValue && item.teacherOnline
-        ? new Date().toISOString()
-        : item.classStartedAt || ''
+      studentOnlineAt: nextValue ? now : '',
+      classStarted: shouldStart,
+      classStartedAt: shouldStart ? now : item.classStartedAt || ''
     })
 
     item.studentOnline = nextValue
-    item.studentOnlineAt = nextValue ? new Date().toISOString() : ''
-    item.classStarted = nextValue && item.teacherOnline
+    item.studentOnlineAt = nextValue ? now : ''
+    item.classStarted = shouldStart
 
-    if (item.classStarted) {
-      item.classStartedAt = new Date().toISOString()
+    if (shouldStart) {
+      item.classStartedAt = now
     }
   } catch (error) {
     console.error(error)
@@ -359,27 +361,29 @@ async function toggleStudent(item) {
 }
 
 async function toggleTeacher(item) {
+  if (!item.id) return
+
   updatingId.value = item.id
   message.value = ''
 
   const nextValue = !item.teacherOnline
+  const now = new Date().toISOString()
+  const shouldStart = item.studentOnline && nextValue
 
   try {
     await updateSchedule(item.id, {
       teacherOnline: nextValue,
-      teacherOnlineAt: nextValue ? new Date().toISOString() : '',
-      classStarted: item.studentOnline && nextValue,
-      classStartedAt: item.studentOnline && nextValue
-        ? new Date().toISOString()
-        : item.classStartedAt || ''
+      teacherOnlineAt: nextValue ? now : '',
+      classStarted: shouldStart,
+      classStartedAt: shouldStart ? now : item.classStartedAt || ''
     })
 
     item.teacherOnline = nextValue
-    item.teacherOnlineAt = nextValue ? new Date().toISOString() : ''
-    item.classStarted = item.studentOnline && nextValue
+    item.teacherOnlineAt = nextValue ? now : ''
+    item.classStarted = shouldStart
 
-    if (item.classStarted) {
-      item.classStartedAt = new Date().toISOString()
+    if (shouldStart) {
+      item.classStartedAt = now
     }
   } catch (error) {
     console.error(error)
@@ -390,17 +394,21 @@ async function toggleTeacher(item) {
 }
 
 async function completeClass(item) {
+  if (!item.id) return
+
   updatingId.value = item.id
   message.value = ''
+
+  const now = new Date().toISOString()
 
   try {
     await updateSchedule(item.id, {
       classCompleted: true,
-      classCompletedAt: new Date().toISOString()
+      classCompletedAt: now
     })
 
     item.classCompleted = true
-    item.classCompletedAt = new Date().toISOString()
+    item.classCompletedAt = now
   } catch (error) {
     console.error(error)
     message.value = '更新課程完成狀態失敗'
